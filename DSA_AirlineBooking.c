@@ -2,486 +2,597 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
-#include <math.h>
-#include <time.h>
 
-// Structure to represent a passenger
-enum city
-{
-    BANGALORE = 1, DELHI = 2, MUMBAI = 3, AHEMDABAD = 4, KOLKATA = 5
-};
+#define ROWS 10
+#define COLS 6
+#define MAX_PASSENGERS 10000
+#define HASH_SIZE 103
+#define MAX_WAITLIST 5
 
-char a1[4] = {'A','B','C','D'};
+#define C_CYAN    "\033[36m"
+#define C_GREEN   "\033[32m"
+#define C_YELLOW  "\033[33m"
+#define C_RED     "\033[31m"
+#define C_RESET   "\033[0m"
+#define C_MAGENTA "\033[35m"
+#define C_WHITE   "\033[37m"
 
-typedef struct passenger
-{
-    char passport[7]; // Increased to 7 to allow for null-terminator
-    char name[25];    
-    char destination[16];
+typedef struct Passenger {
+    char passport[8];          
+    char name[30];
+    char email[40];
+    int day, month, year;
+    char seat_num[8];
+    struct Passenger* next;    
+    struct Flight* flight_ptr; 
+} Passenger;
+
+typedef struct WaitlistNode {
+    Passenger* passenger;
+    struct WaitlistNode* next;
+} WaitlistNode;
+
+typedef struct {
+    WaitlistNode* front;
+    WaitlistNode* rear;
+    int size;
+} Waitlist;
+
+typedef struct Flight {
     char departure[16];
-    char seat_num[10];
-    char email[30];
-    int dd,mm,yyyy; 
-    int new;
-    struct passenger* next;
-}PASS;
+    char destination[16];
+    int schedule; 
+    int seat_map[ROWS][COLS]; 
+    Passenger* passengers; 
+    Waitlist waitlist;
+} Flight;
+
+typedef struct PassengerHashNode {
+    Passenger* passenger;
+    struct PassengerHashNode* next;
+} PassengerHashNode;
+
+typedef struct {
+    int day, month, year;
+} Date;
+Date today = {30, 7, 2025};
+
+const char* cities[] = {"", "Bangalore", "Delhi", "Mumbai", "Ahmedabad", "Kolkata"};
+
+#define TOTAL_ROUTES 20
+#define TOTAL_SCHEDULES 3
+#define TOTAL_FLIGHTS (TOTAL_ROUTES * TOTAL_SCHEDULES)
+
+Flight flights[TOTAL_FLIGHTS];
+
+PassengerHashNode* passenger_hash[HASH_SIZE];
+
+void printLine();
+void printHeader(const char* title);
+void printMenu();
+bool isValidDate(int d, int m, int y, Date today);
+bool isLeapYear(int y);
+bool isValidEmail(const char* email);
+unsigned hash_passport(const char* passport);
+Passenger* findPassengerGlobal(const char* passport, Flight** flightFound);
+void addPassenger();
+void displayTicket();
+void cancelBooking();
+void showSeatMap();
+void initializeFlights();
+void freeAllPassengers();
+bool assignSeat(Flight* flight, char* seat_num_out);
+void freeSeat(Flight* flight, const char* seat_num);
+void enqueueWaitlist(Waitlist* wl, Passenger* p);
+Passenger* dequeueWaitlist(Waitlist* wl);
+void printFlightInfo(const Flight* f);
 
 
-typedef struct date
-{
-    int dd,mm,yyyy; 
-}DATE;
+int main() {
+    initializeFlights();
 
+    int choice;
+    do {
+        printMenu();
+        printf(C_WHITE "Enter your choice: " C_RESET);
+        if(scanf("%d", &choice)!=1) { 
+            while(getchar()!='\n'); 
+            printf(C_RED "Invalid input\n" C_RESET); 
+            continue; 
+        }
+        switch(choice) {
+            case 1: addPassenger(); break;
+            case 2: cancelBooking(); break;
+            case 3: displayTicket(); break;
+            case 4: showSeatMap(); break;
+            case 5: printf(C_YELLOW "Exiting. Goodbye!\n" C_RESET); break;
+            default: printf(C_RED "Invalid choice\n" C_RESET);
+        }
+    } while(choice != 5);
 
-DATE today;
-
-PASS* begin = NULL;
-
-
-// Function to check if a year is a leap year
-int isLeapYear(int year) {
-    if ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)) {
-        return 1;
-    }
+    freeAllPassengers();
+    
     return 0;
 }
-int isValidEmail(const char *email) {
-    if (email == NULL) {
-        return 0;
+
+void initializeFlights() {
+    int idx = 0;
+    for(int dep=1; dep<=5; ++dep) {
+        for(int dest=1; dest<=5; ++dest) {
+            if(dep == dest) continue;
+            for(int sched=1; sched<=3; ++sched) {
+                Flight* f = &flights[idx++];
+                strcpy(f->departure, cities[dep]);
+                strcpy(f->destination, cities[dest]);
+                f->schedule = sched;
+                f->passengers = NULL;
+                f->waitlist.front = f->waitlist.rear = NULL;
+                f->waitlist.size = 0;
+                for(int r=0;r<ROWS;r++)
+                    for(int c=0;c<COLS;c++)
+                        f->seat_map[r][c] = 0;
+            }
+        }
     }
-
-    size_t len = strlen(email);
-    if (len < 5) {
-        return 0;
-    }
-
-    const char *atSymbol = strchr(email, '@');
-    if (atSymbol == NULL) {
-        return 0;
-    }
-
-    const char *dotAfterAt = strchr(atSymbol, '.');
-    if (dotAfterAt == NULL) {
-        return 0;
-    }
-
-    size_t domainLen = len - (dotAfterAt - email) - 1;
-    if (domainLen < 2) {
-        return 0;
-    }
-
-    return 1;
-}
-
-// Function to validate a date
-int isValidDate(int day, int month, int year) 
-{
-    if (year < 2023 || month < 1 || month > 12 || day < 1)
-        return 0;
-    else if(year == today.yyyy )
-    {
-        if(month < today.mm)
-            return 0;
-    }
-    else if(month == today.mm )
-    {
-        if(day < today.dd)
-            return 0;
-    }
-
-    int daysInMonth[] = {0, 31, 28+isLeapYear(year), 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-
-
-    return (day <= daysInMonth[month]);
-}
-
-int isValidPassport(char* s, PASS* begin)
-{
-    PASS* temp = begin;
-    if(strlen(s) != 6)
-        return 0; 
-    while(temp != NULL)
-    {
-        if(strcmp(temp->passport,s) == 0)
-            return 0;
-        temp = temp->next;
-    }
-        return 1;
-
-}
-
-char* seat_no()
-{
-    srand(time(NULL));
-    
-    int randomNumber = rand() % 20 + 1;
-
-    int i = rand() % 4;
-    char letter;
-
-switch(i) {
-    case 0: 
-        letter = 'A';
-        break;
-    case 1:
-      letter = 'B';
-      break;
-    case 2:
-      letter = 'C'; 
-      break;
-    case 3:
-      letter = 'D';
-      break;
-  }
-
-  char *s = malloc(10);
-  sprintf(s, "%d-%c", randomNumber, letter);
-  return s;
-
-}
-
-char* seatno(int x)
-{
-    char* s = (char*)malloc(sizeof(char)*3 + 2);
-    int i = 1;
-    char c = 'A';
-    while(i<x)
-    {
-        c++;
-        if(c == 'E')
-            c = 'A';
-        i++;
-    }
-    int y;
-    if(i%4 == 0)
-        y = i/4 + 48;
-    else
-        y = i/4 + 1 + 48;
-    s[0] = (char)y;
-    s[1] = '-';
-    s[2] = c;
-    s[3] = '\0';
-
-    return s;
-
 }
 
 
-void details(PASS* passenger) 
-{
-    char em[30];
-    char p[7];
-    e1:
-    printf("\nEnter your passport number (6 characters): ");
-    scanf("%6s",p);
-    if(isValidPassport(p,begin))
-        strcpy(passenger->passport, p);
-    else
-    {
-        printf("Please Enter Valid passport\n");
-        goto e1;
-    }
-
-
-    printf("\nEnter your name (up to 30 characters): ");
-    if (scanf(" %[^\n]", passenger->name) != 1) 
-    {
-        printf("Error reading input.\n");
-    }
-
-    e2:
-    printf("\nEnter your email address (up to 30 characters): ");
-    scanf("%s", em);
-    if(isValidEmail(em))
-        strcpy(passenger->email, em);
-    else
-    {
-        printf("Please Enter Valid email\n");
-        goto e2;
-    }
-
-}
-
-void fromto(int dep, int des)
-{
-    if(dep==1)
-        printf("Bengaluru\t");
-    else if(dep==2)
-        printf("Delhi\t");
-    else if(dep==3)
-        printf("Mumbai\t");
-    else if(dep==4)
-        printf("Ahemdabad\t");
-    else if(dep==5)
-        printf("Kolkata\t");
-    
-    if(des==1)
-        printf("Bengaluru\t");
-    else if(des==2)
-        printf("Delhi\t");
-    else if(des==3)
-        printf("Mumbai\t");
-    else if(des==4)
-        printf("Ahemdabad\t");
-    else if(des==5)
-        printf("Kolkata\t");
-}
-
-
-void info(int dep, int des)
-{
-
-    printf("IN THE TABLE BELOW EACH COLOUMN REPRESENTS : TIME , FROM , TO , PRICE RESPECTIVELY\n\n");
-    printf("1. 8am-10am\t");
-    fromto(dep,des);
-    printf("   2000\n");
-    
-    printf("2. 11am-1pm\t");
-    fromto(dep,des);
-    printf("   4000\n");
-
-    printf("3. 3pm-5pm\t");
-    fromto(dep,des);
-    printf("   5000");
-
-}
-
-
-PASS* reserve(int x) 
-{
-    PASS* passenger = (PASS*)malloc(sizeof(PASS));
-    int dept,des;
-    l1:
-    printf("Enter departure city:\n 1.Bangalore\n 2.Delhi \n 3.Mumbai \n 4.Ahemdabad \n 5.Kolkata\n\n");
-    scanf("%d",&dept);
-    
-    printf("\nEnter destination city:\n 1.Bangalore\n 2.Delhi \n 3.Mumbai \n 4.Ahemdabad \n 5.Kolkata\n\n");
-    scanf("%d",&des);
-    
-    if(des==dept || dept>5 || des>5)
-    {
-        printf("\nEnter Valid destination and departure");
-        goto l1;
-    }
-
-    
-    int d,m,y;
-    printf("\nEnter date of flight: ");   
-    l2:
-    scanf("%d-%d-%d",&d,&m,&y);    //dd-mm-yyyy format
-
-    if(isValidDate(d,m,y))
-    {
-        passenger->dd = d;
-        passenger->mm = m;
-        passenger->yyyy = y;
-    }
-    else
-    {
-        printf("\nPlease enter valid date: ");
-        goto l2;
-    }
+void printLine() {
+    for(int i=0;i<40;i++) printf("=");
     printf("\n");
-    info(dept,des);
-    printf("\n\nWhich flight would you choose:");
-    scanf("%d",&passenger->new);
-
-    if(dept==1)
-    {
-        strcpy(passenger->departure,"Banglore");
-    }
-    else if(dept==2)
-    {
-        strcpy(passenger->departure,"Delhi");
-    }
-    else if(dept==3)
-    {
-        strcpy(passenger->departure,"Mumbai");
-    }
-    else if(dept==4)
-    {
-        strcpy(passenger->departure,"Ahemdabad");
-    }
-    else if(dept==5)
-    {
-        strcpy(passenger->departure,"Kolkata");
-    }
-
-    if(des==1)
-    {
-        strcpy(passenger->destination,"Banglore");
-    }
-    else if(des==2)
-    {
-        strcpy(passenger->destination,"Delhi");
-    }
-    else if(des==3)
-    {
-        strcpy(passenger->destination,"Mumbai");
-    }
-    else if(des==4)
-    {
-        strcpy(passenger->destination,"Ahemdabad");
-    }
-    else if(des==5)
-    {
-        strcpy(passenger->destination,"Kolkata");
-    }
-
-    strcpy(passenger->seat_num,seat_no());
-    passenger->next = NULL;
-
-    details(passenger);
-
-    if (begin == NULL) {
-        begin = passenger;
-    } else {
-        PASS* current = begin;
-        while (current->next != NULL) {
-            current = current->next;
-        }
-        current->next = passenger;
-    }
-    printf("\nSeat booking successful at %s!",passenger->seat_num);
-
-    printf("\n\nPAY THE TOTAL AMOUNT IN CASH OR BITCOIN.");
-    return begin;
-
 }
 
+void printHeader(const char* title) {
+    printLine();
+    int padding = (40 - (int)strlen(title)) / 2;
+    for(int i=0;i<padding;i++) printf(" ");
+    printf(C_CYAN "%s\n" C_RESET, title);
+    printLine();
+}
 
-void display(PASS *begin) 
-{   
-    int check=0;
-    PASS* current = begin;
+void printMenu() {
+    printHeader(" MAVERICK AIRLINES ");
+    printf(C_GREEN "1. Reservation\n2. Cancel Booking\n3. Display Ticket\n4. Show Seat Map\n5. Exit\n" C_RESET);
+    printLine();
+}
 
+bool isLeapYear(int y) {
+    return (y%4==0 && y%100!=0) || (y%400==0);
+}
 
-    char passport[7];
-    printf("\nEnter passport number to display a record: ");
-    scanf("%6s", passport);
+bool isValidDate(int d,int m,int y, Date today) {
+    if(y < today.year) return false;
+    if(y == today.year && m < today.month) return false;
+    if(y == today.year && m == today.month && d < today.day) return false;
+    if(m < 1 || m > 12 || d < 1) return false;
+    int daysPerMonth[13]={0,31,28,31,30,31,30,31,31,30,31,30,31};
+    if(m == 2 && isLeapYear(y)) daysPerMonth[2]=29;
+    if(d>daysPerMonth[m]) return false;
+    return true;
+}
 
-    while (current != NULL) {
+bool isValidEmail(const char *email) {
+    const char *at = strchr(email, '@');
+    if (!at || at == email) return false;
+    const char *dot = strchr(at, '.');
+    if (!dot || dot == at+1 || strlen(dot) < 3) return false;
+    return true;
+}
 
-        if (strcmp(current->passport, passport) == 0) 
-        {   check=1;
-            printf("------------------------------------------------------------------------------\n");
-            printf("           BOARDING PASS\n");
-            printf("\nName                     %s\n",current->name);
-            printf("\nEmail ID                 %s\n",current->email);
-            printf("\nDeparture                %s\n",current->departure);
-            printf("\nDestination              %s\n",current->destination);
-            printf("\nSeat Number              %s\n",current->seat_num);
-            printf("\nDate of Departure        %d-%d-%d\n",current->dd,current->mm,current->yyyy);
+unsigned hash_passport(const char* passport) {
+    unsigned h=0;
+    for(;*passport;passport++) h = h*31 + *passport;
+    return h % HASH_SIZE;
+}
 
-            if(current->new==1)
-            {
-                printf("\nFlight Schedule          8am - 10am"); 
-            }
-            else if(current->new==2)
-            {
-                printf("\nFlight Schedule          11am - 1pm"); 
-            }
-            else if(current->new==3)
-            {
-                printf("\nFlight Schedule          3pm - 5pm"); 
-            }
-            int a=pow(current->new,2)+pow(current->new,3);
-            printf("\n\nGate                      %d",a);
-            printf("\n------------------------------------------------------------------------------\n");
-
-            printf("\nTHANK YOU FOR FLYING WITH US");
-            break;
+Passenger* findPassengerGlobal(const char* passport, Flight** flightFound) {
+    unsigned idx = hash_passport(passport);
+    PassengerHashNode* node = passenger_hash[idx];
+    while(node) {
+        if(strcmp(node->passenger->passport, passport) == 0) {
+            if(flightFound) *flightFound = node->passenger->flight_ptr;
+            return node->passenger;
         }
-        current = current->next;
+        node = node->next;
     }
-    if(check==0)
-    {
-        printf("\n\nPassport Number not found.");
+    return NULL;
+}
+
+void addPassengerToHash(Passenger* p) {
+    unsigned h = hash_passport(p->passport);
+    PassengerHashNode* node = malloc(sizeof(PassengerHashNode));
+    node->passenger = p;
+    node->next = passenger_hash[h];
+    passenger_hash[h] = node;
+}
+
+void removePassengerFromHash(Passenger* p) {
+    unsigned h = hash_passport(p->passport);
+    PassengerHashNode* node = passenger_hash[h];
+    PassengerHashNode* prev = NULL;
+    while(node) {
+        if(node->passenger == p) {
+            if(prev) prev->next = node->next;
+            else passenger_hash[h] = node->next;
+            free(node);
+            return;
+        }
+        prev = node;
+        node = node->next;
     }
 }
 
+bool assignSeat(Flight* f, char* seat_num_out) {
+    for(int r=0; r<ROWS; ++r) {
+        for(int c=0; c<COLS; ++c) {
+            if(f->seat_map[r][c] == 0) {
+                f->seat_map[r][c] = 1;
+                sprintf(seat_num_out, "%d-%c", r+1, 'A'+c);
+                return true;
+            }
+        }
+    }
+    return false; 
+}
 
-void cancel(PASS **begin) {
-    char passport[7];
-    printf("\nEnter passport number to delete a record: ");
-    scanf("%6s", passport);
+void freeSeat(Flight* f, const char* seat_num) {
+    int row; char colChar;
+    if(sscanf(seat_num, "%d-%c", &row, &colChar) == 2) {
+        int col = colChar - 'A';
+        if(row >=1 && row <= ROWS && col >=0 && col < COLS) {
+            f->seat_map[row-1][col] = 0;
+        }
+    }
+}
 
-    if (begin == NULL) {
-        printf("\nNo records to delete.");
+void enqueueWaitlist(Waitlist* wl, Passenger* p) {
+    WaitlistNode* node = malloc(sizeof(WaitlistNode));
+    node->passenger = p;
+    node->next = NULL;
+    if(wl->rear) wl->rear->next = node;
+    else wl->front = node;
+    wl->rear = node;
+    wl->size++;
+}
+
+Passenger* dequeueWaitlist(Waitlist* wl) {
+    if(wl->front == NULL) return NULL;
+    WaitlistNode* node = wl->front;
+    Passenger* p = node->passenger;
+    wl->front = node->next;
+    if(wl->front == NULL) wl->rear = NULL;
+    free(node);
+    wl->size--;
+    return p;
+}
+
+
+void addPassenger() {
+    char temp[40];
+    char passport[8];
+    char name[30];
+    char email[40];
+    int d, m, y;
+
+    printHeader("FLIGHT SELECTION");
+
+    int dep_city;
+    do {
+        printf("Select departure city:\n");
+        for(int i=1; i<=5; i++) printf("%d. %s\n", i, cities[i]);
+        printf("Choice (1-5): ");
+        if(scanf("%d", &dep_city)!=1 || dep_city < 1 || dep_city > 5) {
+            while(getchar() != '\n'); 
+            printf(C_RED "Invalid city. Try again.\n" C_RESET);
+            dep_city = -1;
+        }
+    } while(dep_city == -1);
+
+    int dest_city;
+    do {
+        printf("Select destination city (different from departure):\n");
+        for(int i=1; i<=5; i++) if(i!=dep_city) printf("%d. %s\n", i, cities[i]);
+        printf("Choice: ");
+        if(scanf("%d", &dest_city)!=1 || dest_city < 1 || dest_city > 5 || dest_city == dep_city) {
+            while(getchar() != '\n'); 
+            printf(C_RED "Invalid city. Try again.\n" C_RESET);
+            dest_city = -1;
+        }
+    } while(dest_city == -1);
+
+    Flight* route_flights[3];
+    int count=0;
+    for(int i=0; i<TOTAL_FLIGHTS; i++) {
+        if(strcmp(flights[i].departure, cities[dep_city]) == 0 &&
+           strcmp(flights[i].destination, cities[dest_city]) == 0) {
+            route_flights[count++] = &flights[i];
+        }
+    }
+
+    if(count != 3) {
+        printf(C_RED "Error: flights not found for this route.\n" C_RESET);
         return;
     }
 
-    PASS* current = *begin;
-    PASS* previous = NULL;
-
-    while (current != NULL) {
-        if (strcmp(current->passport, passport) == 0) {
-            if (previous == NULL) {
-                *begin = current->next;
-            } else {
-                previous->next = current->next;
-            }
-            free(current);
-            printf("\nBooking has been deleted.");
-            return;
+    printf("Available flight schedules for %s -> %s:\n", cities[dep_city], cities[dest_city]);
+    for(int i=0; i<3; i++) {
+        printf("%d. ", i+1);
+        switch(route_flights[i]->schedule) {
+            case 1: printf("8am-10am"); break;
+            case 2: printf("11am-1pm"); break;
+            case 3: printf("3pm-5pm"); break;
+            default: printf("Unknown"); break;
         }
-        previous = current;
-        current = current->next;
+        int freeSeats=0;
+        for(int r=0;r<ROWS;r++) {
+            for(int c=0;c<COLS;c++) {
+                if(route_flights[i]->seat_map[r][c]==0) freeSeats++;
+            }
+        }
+        printf("  | Seats available: %d\n", freeSeats);
     }
 
-    printf("\nPassport number not found.");
+    int sched_choice = 0;
+    do {
+        printf("Choose schedule (1-3): ");
+        if(scanf("%d", &sched_choice) != 1 || sched_choice < 1 || sched_choice > 3) {
+            while(getchar() != '\n');
+            printf(C_RED "Invalid choice. Try again.\n" C_RESET);
+            sched_choice = 0;
+        }
+    } while(sched_choice == 0);
+
+    Flight* chosen_flight = route_flights[sched_choice - 1];
+
+    do {
+        printf("Enter Passport Number (6 chars): ");
+        scanf("%7s", passport);
+        if(strlen(passport) != 6 || findPassengerGlobal(passport, NULL)) {
+            printf(C_RED "Invalid or duplicate passport. Try again.\n" C_RESET);
+        } else break;
+    } while(1);
+
+    getchar(); 
+    printf("Enter Name: ");
+    fgets(name, 30, stdin);
+    name[strcspn(name, "\n")] = 0;
+
+    do {
+        printf("Flight Date (DD-MM-YYYY): ");
+        if(scanf("%d-%d-%d", &d, &m, &y) != 3 || !isValidDate(d,m,y,today)) {
+            while(getchar() != '\n');
+            printf(C_RED "Invalid date. Try again.\n" C_RESET);
+        } else break;
+    } while(1);
+
+    do {
+        printf("Enter Email: ");
+        scanf("%39s", email);
+        if(!isValidEmail(email)) {
+            printf(C_RED "Invalid email format. Try again.\n" C_RESET);
+        } else break;
+    } while(1);
+
+    Passenger* p = malloc(sizeof(Passenger));
+    strcpy(p->passport, passport);
+    strcpy(p->name, name);
+    strcpy(p->email, email);
+    p->day = d; p->month = m; p->year = y;
+    p->flight_ptr = chosen_flight;
+
+    if(assignSeat(chosen_flight, p->seat_num)) {
+        p->next = chosen_flight->passengers;
+        chosen_flight->passengers = p;
+        addPassengerToHash(p);
+        printHeader("RESERVATION SUCCESSFUL!");
+        printf(C_GREEN "Seat Number: %s\nDon't forget your passport!\n" C_RESET, p->seat_num);
+    } else {
+        if(chosen_flight->waitlist.size < MAX_WAITLIST) {
+            enqueueWaitlist(&chosen_flight->waitlist, p);
+            printHeader("WAITLISTED");
+            printf(C_YELLOW "Flight full, added to waitlist. We'll notify if seat becomes available.\n" C_RESET);
+        } else {
+            printf(C_RED "Flight and waitlist full. Try another flight.\n" C_RESET);
+            free(p);
+        }
+    }
+    printLine();
 }
 
 
-int main() 
-{
-    PASS *begin;
-    today.dd = 24; today.mm = 11; today.yyyy = 2023;
-
-    //AP planes[20];
-
-    int choice;
-    int num = 1;
-
-    do {
-        printf("\n\n***** WELCOME TO MAVERICK AIRLINE SYSTEM *****");
-        printf("\n\nPlease enter your choice from below (1-4):");
-        printf("\n1. Reservation");
-        printf("\n2. Cancel");
-        printf("\n3. Display Records");
-        printf("\n4. Exit");
-        printf("\nEnter your choice: ");
-
-        scanf("%d", &choice);
-        printf("\n\n");
-        switch (choice) {
-            case 1:
-                begin=reserve(num);
-                num++;
-                break;
-            case 2:
-                cancel(&begin);
-                break;
-            case 3:
-                display(begin);
-                break;
-            case 4:
-                // Add code to free allocated memory before exiting
-                printf("\nExiting the program.\n");
-                exit(1);
-                
-            default:
-                printf("\nInvalid choice. Please choose from 1-4.");
-        }
-    } while (choice != 4);
-
-    // Free allocated memory before exiting
-    PASS* current = begin;
-    while (current != NULL) {
-        PASS* next = current->next;
-        free(current);
-        current = next;
+void cancelBooking() {
+    char passport[8];
+    Flight* flight_of_passenger = NULL;
+    printHeader("CANCEL BOOKING");
+    printf("Enter Passport Number: ");
+    scanf("%7s", passport);
+    Passenger* p = findPassengerGlobal(passport, &flight_of_passenger);
+    if(!p) {
+        printf(C_RED "No booking found with this passport.\n" C_RESET);
+        return;
     }
 
-    return 0;
+    Passenger* cur = flight_of_passenger->passengers;
+    Passenger* prev = NULL;
+    while(cur && cur != p) {
+        prev = cur;
+        cur = cur->next;
+    }
+    if(!cur) { 
+        printf(C_RED "Internal error.\n" C_RESET);
+        return;
+    }
+    if(prev) prev->next = cur->next;
+    else flight_of_passenger->passengers = cur->next;
+
+    removePassengerFromHash(p);
+
+    freeSeat(flight_of_passenger, p->seat_num);
+    printf(C_GREEN "Booking cancelled successfully.\n" C_RESET);
+
+    Passenger* waitlisted_passenger = dequeueWaitlist(&flight_of_passenger->waitlist);
+    if(waitlisted_passenger) {
+        if(assignSeat(flight_of_passenger, waitlisted_passenger->seat_num)) {
+            waitlisted_passenger->next = flight_of_passenger->passengers;
+            flight_of_passenger->passengers = waitlisted_passenger;
+            addPassengerToHash(waitlisted_passenger);
+            printf(C_GREEN "Waitlisted passenger promoted:\nName: %s, Passport: %s\n", waitlisted_passenger->name, waitlisted_passenger->passport);
+        } else {
+            printf(C_RED "Error: Could not assign seat to waitlisted passenger!\n" C_RESET);
+            free(waitlisted_passenger);
+        }
+    }
+    free(p);
+    printLine();
+}
+
+
+void displayTicket() {
+    char passport[8];
+    Flight* flight_of_passenger = NULL;
+    printHeader("DISPLAY TICKET");
+    printf("Enter Passport Number: ");
+    scanf("%7s", passport);
+    Passenger* p = findPassengerGlobal(passport, &flight_of_passenger);
+    if(!p) {
+        printf(C_RED "No booking found with this passport.\n" C_RESET);
+        return;
+    }
+
+    printHeader("BOARDING PASS");
+
+    printf("Name       : %s\n", p->name);
+    printf("Email      : %s\n", p->email);
+    printf("From       : %s\n", flight_of_passenger->departure);
+    printf("To         : %s\n", flight_of_passenger->destination);
+    printf("Date       : %02d-%02d-%04d\n", p->day, p->month, p->year);
+    printf("Seat       : %s\n", p->seat_num);
+    printf("Schedule   : ");
+    switch(flight_of_passenger->schedule) {
+        case 1: printf("8am-10am"); break;
+        case 2: printf("11am-1pm"); break;
+        case 3: printf("3pm-5pm"); break;
+        default: printf("Unknown"); break;
+    }
+    printf("\n");
+    printf(C_MAGENTA "Gate       : %d\n" C_RESET, flight_of_passenger->schedule*flight_of_passenger->schedule + flight_of_passenger->schedule*flight_of_passenger->schedule*flight_of_passenger->schedule);
+    printLine();
+}
+
+
+void showSeatMap() {
+    int dep_city, dest_city;
+    printHeader("SHOW SEAT MAP");
+
+    do {
+        printf("Select departure city:\n");
+        for(int i=1; i<=5; i++) printf("%d. %s\n", i, cities[i]);
+        printf("Choice (1-5): ");
+        if(scanf("%d", &dep_city) != 1 || dep_city < 1 || dep_city > 5) {
+            while(getchar() != '\n');
+            printf(C_RED "Invalid city. Try again.\n" C_RESET);
+            dep_city = -1;
+        }
+    } while(dep_city == -1);
+
+    do {
+        printf("Select destination city (different from departure):\n");
+        for(int i=1; i<=5; i++) if(i != dep_city) printf("%d. %s\n", i, cities[i]);
+        printf("Choice: ");
+        if(scanf("%d", &dest_city) != 1 || dest_city < 1 || dest_city > 5 || dest_city == dep_city) {
+            while(getchar() != '\n');
+            printf(C_RED "Invalid city. Try again.\n" C_RESET);
+            dest_city = -1;
+        }
+    } while(dest_city == -1);
+
+    Flight* route_flights[3];
+    int count=0;
+    for(int i=0; i<TOTAL_FLIGHTS; i++) {
+        if(strcmp(flights[i].departure, cities[dep_city])==0 &&
+           strcmp(flights[i].destination, cities[dest_city])==0) {
+            route_flights[count++] = &flights[i];
+        }
+    }
+    if(count != 3) {
+        printf(C_RED "Error: flights not found for this route.\n" C_RESET);
+        return;
+    }
+
+    printf("Available flight schedules:\n");
+    for(int i=0; i<count; i++) {
+        printf("%d. ", i+1);
+        switch(route_flights[i]->schedule) {
+            case 1: printf("8am-10am"); break;
+            case 2: printf("11am-1pm"); break;
+            case 3: printf("3pm-5pm"); break;
+            default: printf("Unknown"); break;
+        }
+        int freeSeats=0;
+        for(int r=0;r<ROWS;r++) for(int c=0;c<COLS;c++) if(route_flights[i]->seat_map[r][c] == 0) freeSeats++;
+        printf(" - Free Seats: %d\n", freeSeats);
+    }
+
+    int sched_choice=0;
+    do {
+        printf("Choose schedule (1-3): ");
+        if(scanf("%d", &sched_choice) != 1 || sched_choice <1 || sched_choice >3) {
+            while(getchar() != '\n');
+            printf(C_RED "Invalid choice. Try again.\n" C_RESET);
+            sched_choice = 0;
+        }
+    } while(sched_choice == 0);
+
+    Flight* chosen_flight = route_flights[sched_choice - 1];
+
+    printHeader("SEAT MAP");
+    printf("Flight: %s -> %s  Schedule: ", chosen_flight->departure, chosen_flight->destination);
+    switch(chosen_flight->schedule) {
+        case 1: printf("8am-10am"); break;
+        case 2: printf("11am-1pm"); break;
+        case 3: printf("3pm-5pm"); break;
+        default: printf("Unknown");
+    }
+    printf("\n\n");
+
+    printf("    ");
+    for(int c=0; c<COLS; c++) printf("  %c ", 'A'+c);
+    printf("\n");
+    for(int r=0; r<ROWS; r++) {
+        printf("Row%2d ", r+1);
+        for(int c=0; c<COLS; c++) {
+            if(chosen_flight->seat_map[r][c] == 0) 
+                printf(C_GREEN " [ ]" C_RESET);
+            else
+                printf(C_RED " [X]" C_RESET);
+        }
+        printf("\n");
+    }
+    printf("\nWaitlist size: %d\n", chosen_flight->waitlist.size);
+    printLine();
+}
+
+
+void freeAllPassengers() {
+    for(int i=0; i<TOTAL_FLIGHTS; i++) {
+        Passenger* p = flights[i].passengers;
+        while(p) {
+            Passenger* nxt = p->next;
+            free(p);
+            p = nxt;
+        }
+        while(flights[i].waitlist.front) {
+            Passenger* w_pass = dequeueWaitlist(&flights[i].waitlist);
+            free(w_pass);
+        }
+    }
+    for(int i=0; i<HASH_SIZE; i++) {
+        PassengerHashNode* node = passenger_hash[i];
+        while(node) {
+            PassengerHashNode* nxt = node->next;
+            free(node);
+            node = nxt;
+        }
+        passenger_hash[i] = NULL;
+    }
 }
